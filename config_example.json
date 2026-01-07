@@ -1,0 +1,76 @@
+{
+  "_comment": "GMTSAR InSAR Processing Pipeline Configuration File",
+  "_description": "This file contains all parameters needed for running the complete SBAS workflow",
+
+  "project_root": "/path/to/your/project",
+  "orbit": "asc",
+
+  "dem": {
+    "_comment": "Stage 2: DEM Creation",
+    "minlon": -157.0,
+    "maxlon": -154.2,
+    "minlat": 18.0,
+    "maxlat": 20.4,
+    "mode": 1,
+    "_mode_description": "1 = SRTM1 (30m), 2 = SRTM3 (90m)"
+  },
+
+  "orbits": {
+    "_comment": "Stage 4: Orbit Download and Optional Reframing",
+    "mode": 1,
+    "_mode_description": "1 = precise orbits, 2 = restituted orbits",
+    "reframe": false,
+    "pin1_lon": -157.0,
+    "pin1_lat": 18.0,
+    "pin2_lon": -154.2,
+    "pin2_lat": 20.4,
+    "_reframe_note": "Pin coordinates required only if reframe is true"
+  },
+
+  "preprocessing": {
+    "_comment": "Stage 5: Master Selection and Alignment",
+    "subswath_list": ["F1", "F2", "F3"],
+    "_note": "Master selection is automatic based on baseline analysis"
+  },
+
+  "interferograms": {
+    "_comment": "Stage 6: Interferogram Generation",
+    "threshold_time": 100,
+    "_threshold_time_description": "Temporal baseline threshold in days (typical: 48-200)",
+    "threshold_baseline": 150,
+    "_threshold_baseline_description": "Perpendicular baseline threshold in meters (typical: 100-300)",
+    "config_path": null,
+    "_config_path_note": "Optional path to intf.in configuration file"
+  },
+
+  "merge": {
+    "_comment": "Stage 7: Interferogram Merging",
+    "mode": 1,
+    "_mode_description": "1 = merge all subswaths, 2 = merge specified subswaths"
+  },
+
+  "unwrap": {
+    "_comment": "Stage 8: Phase Unwrapping",
+    "coherence_threshold": 0.075,
+    "_coherence_threshold_description": "Range: 0.0-1.0, typical: 0.05-0.15",
+    "corr_threshold": 0.01,
+    "_corr_threshold_description": "Range: 0.0-1.0, typical: 0.01-0.05",
+    "max_dis_threshold": 40,
+    "_max_dis_threshold_description": "Range: 10-100, typical: 40",
+    "use_landmask": false,
+    "use_mask_def": true
+  },
+
+  "advanced": {
+    "_comment": "Advanced Options",
+    "skip_completed": true,
+    "verbose": true
+  },
+
+  "_usage_examples": {
+    "run_complete_pipeline": "python main.py config_example.json --sequential",
+    "run_specific_stage": "python main.py /path/to/project --stage 5",
+    "resume_processing": "python main.py /path/to/project --resume",
+    "check_status": "python main.py /path/to/project --status"
+  }
+}

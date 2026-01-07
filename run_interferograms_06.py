@@ -10,8 +10,14 @@ import sys
 import glob
 import re
 import sys
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
+
+# Optional matplotlib import for plotting
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
 
 def run_cmd(cmd, cwd=None):
     proc = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -64,6 +70,11 @@ def preparing_intf_list(project_root: Path, orbit: str, sub: str, threshold_time
     return lines, years, baselines, intf_list_info
     
 def show_intf(dt, db, years, lines, baselines):
+    """Display interferogram baseline plot (requires matplotlib)"""
+    if not HAS_MATPLOTLIB:
+        print("Note: matplotlib not available, skipping baseline plot")
+        return
+
     # graph plotting
     fig, ax = plt.subplots(figsize=(8,6))
 
@@ -193,7 +204,7 @@ def run_intf(project_root, orbit, sub, threshold_time, threshold_baseline, confi
     copy_intf_info = copy_intf(project_root, orbit)
     config_info = copy_and_set_config(project_root, orbit, config_path, master)
     make_intf_info = make_intf(project_root, orbit, sub="F1")
-    return(write_meta_log(project_root, orbit, sub))
+    return(write_meta_log(project_root, orbit, sub, intf_list_info, copy_intf_info, config_info, make_intf_info))
 
 
 

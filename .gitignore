@@ -1,0 +1,36 @@
+# ==== Python ====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Editors / IDE
+.idea/
+.vscode/
+
+# Build / temp
+build/
+dist/
+
+# Security / secrets (אם יש)
+.env
+
+# Windows ADS metadata (מאוד חשוב אצלך)
+*:Zone.Identifier
+
+CLAUDE.md

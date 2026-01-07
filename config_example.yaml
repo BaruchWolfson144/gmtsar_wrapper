@@ -1,0 +1,142 @@
+# GMTSAR InSAR Processing Pipeline Configuration File
+# This file contains all parameters needed for running the complete SBAS workflow
+# Users can customize these values for their specific processing needs
+
+# ==============================================================================
+# PROJECT SETTINGS
+# ==============================================================================
+project_root: "/path/to/your/project"
+orbit: "asc"  # Options: "asc" (ascending) or "des" (descending)
+
+# ==============================================================================
+# STAGE 1: DIRECTORY STRUCTURE CREATION
+# ==============================================================================
+# No additional parameters needed - uses project_root and orbit
+
+# ==============================================================================
+# STAGE 2: DEM CREATION
+# ==============================================================================
+# Bounding box for DEM (in decimal degrees): [minlon, maxlon, minlat, maxlat]
+bbox: [-157.0, -154.2, 18.0, 20.4]
+
+# DEM resolution mode
+# 1 = SRTM1 (30m resolution)
+# 2 = SRTM3 (90m resolution)
+mode: 1
+
+# Optional: explicit path to make_dem.csh if not in PATH
+# make_dem_path: "/opt/GMTSAR/bin/make_dem.csh"
+
+# ==============================================================================
+# STAGE 4: ORBIT DOWNLOAD AND OPTIONAL REFRAMING
+# ==============================================================================
+# Orbit file mode
+# 1 = precise orbits (recommended, available ~2 weeks after acquisition)
+# 2 = restituted orbits (available within 24 hours)
+orbit_mode: 1
+
+# Reframing (stitching/cropping) settings
+# Set reframe to true if you need to combine multiple frames or crop the scene
+reframe: false
+
+# Pin coordinates for reframing (required only if reframe: true)
+# Pins should be ordered in along-track direction:
+# - For ascending: pin1 (south) to pin2 (north)
+# - For descending: pin1 (north) to pin2 (south)
+pin1_lon: -157.0
+pin1_lat: 18.0
+pin2_lon: -154.2
+pin2_lat: 20.4
+
+# ==============================================================================
+# STAGE 5: MASTER SELECTION AND ALIGNMENT
+# ==============================================================================
+# List of subswaths to process
+# Standard Sentinel-1 TOPS has 3 subswaths: F1, F2, F3
+subswath_list:
+  - "F1"
+  - "F2"
+  - "F3"
+
+# Master image selection is automatic based on baseline analysis
+# The script will select the image closest to the temporal+spatial centroid
+# No manual parameters needed
+
+# ==============================================================================
+# STAGE 6: INTERFEROGRAM GENERATION
+# ==============================================================================
+# Temporal baseline threshold (days)
+# Only image pairs separated by less than this many days will be processed
+# Typical range: 48-200 days
+threshold_time: 100
+
+# Perpendicular baseline threshold (meters)
+# Only image pairs with perpendicular baseline less than this will be processed
+# Typical range: 100-300 meters
+threshold_baseline: 150
+
+# Path to batch_tops.config configuration file
+# This file contains GMTSAR processing parameters
+# If not specified, default parameters will be used
+# config_path: "path/to/batch_tops.config"
+
+# ==============================================================================
+# STAGE 7: INTERFEROGRAM MERGING
+# ==============================================================================
+# Merge mode
+# 1 = merge all subswaths
+# 2 = merge only specified subswaths
+merge_mode: 1
+
+# ==============================================================================
+# STAGE 8: PHASE UNWRAPPING
+# ==============================================================================
+# Coherence threshold for unwrapping
+# Pixels with coherence below this value will be masked
+# Range: 0.0 - 1.0, typical: 0.05 - 0.15
+coherence_threshold: 0.075
+
+# Correlation threshold
+# Additional quality metric for phase unwrapping
+# Range: 0.0 - 1.0, typical: 0.01 - 0.05
+corr_threshold: 0.01
+
+# Maximum discontinuity threshold
+# Controls how aggressive the unwrapping algorithm is
+# Range: 10 - 100, typical: 40
+max_dis_threshold: 40
+
+# Use landmask to exclude water areas
+# Requires landmask.grd file in topo directory
+use_landmask: false
+
+# Use default masking based on correlation and coherence
+use_mask_def: true
+
+# ==============================================================================
+# ADVANCED OPTIONS
+# ==============================================================================
+advanced:
+  # Skip stages that have already been completed
+  skip_completed: true
+
+  # Verbose output
+  verbose: true
+
+  # Number of parallel processes (for future implementation)
+  # num_processes: 4
+
+# ==============================================================================
+# USAGE EXAMPLES
+# ==============================================================================
+# Run complete pipeline from start:
+#   python main.py config_example.yaml --sequential
+#
+# Run specific stage:
+#   python main.py /path/to/project --stage 5
+#
+# Resume from last completed stage:
+#   python main.py /path/to/project --resume
+#
+# Check processing status:
+#   python main.py /path/to/project --status
