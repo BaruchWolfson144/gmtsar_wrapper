@@ -2,7 +2,7 @@
 
 ## Overview
 
-This Python wrapper provides a modular interface for running the complete GMTSAR SBAS (Small Baseline Subset) InSAR time series processing workflow. The pipeline consists of 8 main processing stages, from initial setup to phase unwrapping.
+This Python wrapper provides a modular interface for running the complete GMTSAR SBAS (Small Baseline Subset) InSAR time series processing workflow. The pipeline consists of 8 main processing stages, from initial setup to phase unwrapping. see the .pdf file for original manual.
 
 ## Quick Start
 
