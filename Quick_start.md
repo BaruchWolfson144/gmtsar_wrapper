@@ -18,7 +18,7 @@
 - **run_interferograms_06.py** - תוקן באג + matplotlib הפך לאופציונלי
 
 ### כל שאר הקבצים נשארו ללא שינוי!
-הקבצים make_dir_tree_01.py, make_dem_02.py, make_orbits_04.py וכו' עדיין עובדים בדיוק כמו קודם.
+הקבצים make_dir_tree_01.py, stage_02_download_data.py, make_dem_03.py, make_orbits_04.py וכו' עדיין עובדים בדיוק כמו קודם.
 
 ## איך זה עובד?
 
@@ -120,8 +120,8 @@ interferograms:
 ## 8 השלבים
 
 1. **stage_01** - יצירת מבנה תיקיות
-2. **stage_02** - הורדת DEM
-3. *(stage_03 מדולג - הורדת נתונים נעשית ידנית)*
+2. **stage_02** - הורדת נתונים מ-ASF (Sentinel-1 data)
+3. **stage_03** - הורדת DEM
 4. **stage_04** - הורדת קבצי orbit + reframing (אופציונלי)
 5. **stage_05** - בחירת master ו-alignment
 6. **stage_06** - יצירת אינטרפרוגרמות
@@ -225,7 +225,8 @@ cat <project_root>/wrapper_meta/logs/step*.json
 ✓ אפשר להמשיך להשתמש בהם ישירות:
 ```bash
 python make_dir_tree_01.py /path --orbit asc
-python make_dem_02.py /path --minlon ... --maxlon ...
+python stage_02_download_data.py /path --polygon ... --start ... --end ...
+python make_dem_03.py /path --minlon ... --maxlon ...
 ```
 
 ## דרישות מערכת

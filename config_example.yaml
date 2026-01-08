@@ -14,7 +14,46 @@ orbit: "asc"  # Options: "asc" (ascending) or "des" (descending)
 # No additional parameters needed - uses project_root and orbit
 
 # ==============================================================================
-# STAGE 2: DEM CREATION
+# STAGE 2: DOWNLOAD SENTINEL-1 DATA FROM ASF
+# ==============================================================================
+# WKT polygon defining area of interest (must be a closed polygon)
+# Format: "POLYGON((lon1 lat1, lon2 lat2, ..., lon1 lat1))"
+# Example below matches the bbox above
+polygon: "POLYGON((-157.0 18.0, -154.2 18.0, -154.2 20.4, -157.0 20.4, -157.0 18.0))"
+
+# Date range for Sentinel-1 data acquisition
+# Format: "Month+Day,+Year" (URL-encoded format for ASF API)
+# Adjust these dates to your study period
+start_date: "January+1,+2023"
+end_date: "December+31,+2023"
+
+# Sentinel-1 relative orbit number (also called "path")
+# Find your orbit number at: https://search.asf.alaska.edu
+# Examples:
+#   - Hawaii ascending: 124
+#   - Hawaii descending: 87
+#   - Israel ascending: 87
+#   - Israel descending: 160
+relative_orbit: 124
+
+# ASF EarthData credentials (REQUIRED for data download)
+# Register for free at: https://urs.earthdata.nasa.gov
+# IMPORTANT: Do NOT commit credentials to version control!
+# Consider using environment variables or separate credentials file
+asf_username: "your_earthdata_username"
+asf_password: "your_earthdata_password"
+
+# SAR polarization mode
+# Options: "VV", "VH", "HH", "HV", "VV+VH", "HH+HV"
+# Most common for land applications: "VV"
+# For ocean/ice: consider "HH" or dual-pol
+polarization: "VV"
+
+# NOTE: Stage 2 can be skipped if you already have Sentinel-1 data
+# To skip, simply don't include stage 2 in your pipeline run
+
+# ==============================================================================
+# STAGE 3: DEM CREATION
 # ==============================================================================
 # Bounding box for DEM (in decimal degrees): [minlon, maxlon, minlat, maxlat]
 bbox: [-157.0, -154.2, 18.0, 20.4]
@@ -129,14 +168,21 @@ advanced:
 # ==============================================================================
 # USAGE EXAMPLES
 # ==============================================================================
-# Run complete pipeline from start:
-#   python main.py config_example.yaml --sequential
+# Run complete pipeline from start (including data download):
+#   python main.py --project-root /path/to/project --config config_example.yaml --sequential
+#
+# Run pipeline skipping stage 3 (if you already have data):
+#   python main.py --project-root /path/to/project --config config_example.yaml --start-stage 1 --end-stage 2 --sequential
+#   python main.py --project-root /path/to/project --config config_example.yaml --start-stage 4 --end-stage 8 --sequential
+#
+# Run only data download stage:
+#   python main.py --project-root /path/to/project --config config_example.yaml --stage 3
 #
 # Run specific stage:
-#   python main.py /path/to/project --stage 5
+#   python main.py --project-root /path/to/project --stage 5
 #
 # Resume from last completed stage:
-#   python main.py /path/to/project --resume
+#   python main.py --project-root /path/to/project --resume
 #
 # Check processing status:
-#   python main.py /path/to/project --status
+#   python main.py --project-root /path/to/project --status

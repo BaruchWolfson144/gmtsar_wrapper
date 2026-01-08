@@ -33,7 +33,8 @@ from typing import Dict, Any, Optional, List
 
 # Import processing stages
 from make_dir_tree_01 import run_create_project
-from make_dem_02 import run_make_dem
+from stage_02_download_data import run_download_data, validate_download_parameters
+from make_dem_03 import run_make_dem
 from make_orbits_04 import run_download_orbits
 from choose_master_05 import run_preprocess_subswath
 from run_interferograms_06 import run_intf
@@ -183,15 +184,15 @@ class InSARPipeline:
         logger.info(f"Project structure created at: {result}")
         return outputs
 
-    def stage_02_make_dem(
+    def stage_03_make_dem(
         self,
         bbox: Optional[List[float]] = None,
         mode: Optional[int] = None,
         make_dem_path: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Stage 02: Create DEM grid"""
+        """Stage 03: Create DEM grid"""
         logger.info("=" * 70)
-        logger.info("STAGE 02: Creating DEM Grid")
+        logger.info("STAGE 03: Creating DEM Grid")
         logger.info("=" * 70)
 
         bbox = bbox or self.state.get_parameter("bbox")
@@ -217,8 +218,73 @@ class InSARPipeline:
             "log_path": str(logp)
         }
 
-        self.state.mark_stage_complete("stage_02", outputs)
+        self.state.mark_stage_complete("stage_03", outputs)
         logger.info(f"DEM creation result:\n{result_msg}")
+        return outputs
+
+    def stage_02_download_data(
+        self,
+        polygon: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        relative_orbit: Optional[int] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        polarization: Optional[str] = None,
+        orbit: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Stage 02: Download Sentinel-1 data from ASF"""
+        logger.info("=" * 70)
+        logger.info("STAGE 02: Downloading Sentinel-1 Data from ASF")
+        logger.info("=" * 70)
+
+        # Get parameters from state/config
+        polygon = polygon or self.state.get_parameter("polygon")
+        start_date = start_date or self.state.get_parameter("start_date")
+        end_date = end_date or self.state.get_parameter("end_date")
+        relative_orbit = relative_orbit or self.state.get_parameter("relative_orbit")
+        username = username or self.state.get_parameter("asf_username")
+        password = password or self.state.get_parameter("asf_password")
+        polarization = polarization or self.state.get_parameter("polarization", "VV")
+        orbit = orbit or self.state.get_parameter("orbit", "asc")
+
+        # Validate required parameters using the validation function
+        missing = validate_download_parameters(
+            polygon, start_date, end_date, relative_orbit, username, password
+        )
+
+        if missing:
+            raise ValueError(
+                f"Missing required parameters for Stage 02 (data download): {', '.join(missing)}. "
+                f"Please provide them in config file or as function arguments."
+            )
+
+        # Call the download function
+        logp, metadata = run_download_data(
+            project_root=self.project_root,
+            polygon=polygon,
+            start_date=start_date,
+            end_date=end_date,
+            relative_orbit=relative_orbit,
+            username=username,
+            password=password,
+            orbit=orbit,
+            polarization=polarization
+        )
+
+        outputs = {
+            "data_downloaded": True,
+            "total_scenes": metadata["total_scenes"],
+            "downloaded": metadata["downloaded"],
+            "failed": metadata["failed"],
+            "data_directory": metadata["output_directory"],
+            "csv_file": metadata["csv_file"],
+            "data_list": metadata["data_list"],
+            "log_path": str(logp)
+        }
+
+        self.state.mark_stage_complete("stage_02", outputs)
+        logger.info(f"Data download completed: {metadata['downloaded']}/{metadata['total_scenes']} scenes")
         return outputs
 
     def stage_04_download_orbits(
@@ -464,7 +530,8 @@ class InSARPipeline:
 
         stage_methods = {
             1: self.stage_01_create_project,
-            2: self.stage_02_make_dem,
+            2: self.stage_02_download_data,
+            3: self.stage_03_make_dem,
             4: self.stage_04_download_orbits,
             5: self.stage_05_preprocess_subswaths,
             6: self.stage_06_run_interferograms,
@@ -586,7 +653,7 @@ Examples:
     parser.add_argument(
         '--stage',
         type=int,
-        choices=[1, 2, 4, 5, 6, 7, 8],
+        choices=[1, 2, 3, 4, 5, 6, 7, 8],
         help='Run specific stage only'
     )
 
@@ -642,7 +709,8 @@ Examples:
         elif args.stage:
             stage_methods = {
                 1: pipeline.stage_01_create_project,
-                2: pipeline.stage_02_make_dem,
+                2: pipeline.stage_02_download_data,
+                3: pipeline.stage_03_make_dem,
                 4: pipeline.stage_04_download_orbits,
                 5: pipeline.stage_05_preprocess_subswaths,
                 6: pipeline.stage_06_run_interferograms,

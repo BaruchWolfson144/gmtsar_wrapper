@@ -338,7 +338,7 @@ print(f"Selected master: {master}")
 
 - **GMTSAR Tutorial:** `sentinel_time_series.pdf`
 - **GMTSAR Website:** https://topex.ucsd.edu/gmtsar/
-- **Individual Stage Scripts:** `make_dir_tree_01.py`, `make_dem_02.py`, etc.
+- **Individual Stage Scripts:** `make_dir_tree_01.py`, `stage_02_download_data.py`, `make_dem_03.py`, etc.
 
 ## Support
 

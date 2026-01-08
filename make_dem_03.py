@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-make_dem_02.py - GMTSAR Step 2: DEM Creation
+make_dem_03.py - GMTSAR Step 3: DEM Creation
 
 This script handles Digital Elevation Model (DEM) creation for InSAR processing.
-It corresponds to Step 2 in the GMTSAR SBAS workflow: "Preparing the Topography DEM Grid Files"
+It corresponds to Step 3 in the GMTSAR SBAS workflow: "Preparing the Topography DEM Grid Files"
 
-The DEM must be created BEFORE reframing and orbit processing (Steps 3c and 4).
+The DEM must be created AFTER data download (Step 2) and BEFORE orbit processing (Step 4).
 
 Usage:
-    python make_dem_02.py /path/to/project_root \
+    python make_dem_03.py /path/to/project_root \
         --minlon -157 --maxlon -154.2 --minlat 18 --maxlat 20.4 \
         --mode 1
 
 Reference:
-    sentinel_time_series.pdf - Section 2 (Page 3)
+    sentinel_time_series.pdf - Section 3 (Page 3)
 """
 import argparse
 import subprocess
@@ -142,7 +142,7 @@ def run_make_dem(project_root: Path, bbox: dict, mode: int, make_dem_path=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GMTSAR Step 2: Create DEM for InSAR processing"
+        description="GMTSAR Step 3: Create DEM for InSAR processing"
     )
     parser.add_argument("project_root", help="Path to project root directory")
     parser.add_argument("--minlon", type=float, required=True, help="Minimum longitude for DEM")

@@ -151,7 +151,8 @@ def test_stage_method_signatures():
         # Check that all stage methods exist
         expected_methods = [
             "stage_01_create_project",
-            "stage_02_make_dem",
+            "stage_02_download_data",
+            "stage_03_make_dem",
             "stage_04_download_orbits",
             "stage_05_preprocess_subswaths",
             "stage_06_run_interferograms",
