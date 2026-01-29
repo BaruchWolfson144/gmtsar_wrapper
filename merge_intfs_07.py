@@ -13,30 +13,67 @@ import sys
 
 
 def run_cmd(cmd, cwd=None):
-    proc = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    import os
+    # Preserve the full environment including PATH
+    env = os.environ.copy()
+    proc = subprocess.run(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 def prepare_merge_list(project_root: Path, orbit: str, master: str, mode=2):
+    """
+    Create merge_list and promote master to first line.
+
+    Args:
+        project_root: Project root directory
+        orbit: Orbit directory (asc/des)
+        master: Master stem name (e.g., "S1_20200104_ALL_F1")
+        mode: Merge mode (1/2/3)
+
+    The master format is: S1_YYYYMMDD_ALL_F#
+    We extract the date (YYYYMMDD) to match against merge_list entries.
+    """
     # create merge_list
     cwd = project_root / orbit / "merge"
     if not cwd.exists():
         raise RuntimeError(f"merge directory not found: {cwd}")
     cmd = f"create_merge_input.csh intflist .. {mode} > merge_list"
     pc, out, err = run_cmd(cmd, cwd)
-    # promote master line to first line 
+
+    # promote master line to first line
     merge_list = cwd / "merge_list"
     lines = []
-    master_base = master[3:10]
+
+    # Extract date from master stem: S1_YYYYMMDD_ALL_F# -> YYYYMMDD (8 digits)
+    # Fixed: was master[3:10] (7 chars), now master[3:11] (8 chars)
+    master_base = master[3:11]  # "S1_20200104_ALL_F1" -> "20200104"
     master_pattern = re.compile(rf"S[1-3]_{master_base}")
     master_line = None
-    for line in merge_list.read_text().splitlines():
-        second = line.split(":")[1]
+
+    merge_list_content = merge_list.read_text().strip()
+    if not merge_list_content:
+        raise RuntimeError(
+            f"merge_list is empty. This usually means no interferograms were created. "
+            f"Check that intflist exists and contains interferogram pairs."
+        )
+
+    for line in merge_list_content.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(":")
+        if len(parts) < 2:
+            continue
+        second = parts[1]
         if master_pattern.match(second):
             master_line = line
         else:
             lines.append(line)
+
     if master_line is None:
-        raise RuntimeError("Master line not found in merge_list")
+        raise RuntimeError(
+            f"Master line not found in merge_list. "
+            f"Master: {master}, extracted date: {master_base}, pattern: {master_pattern.pattern}"
+        )
+
     merge_list.write_text(master_line + "\n" + "\n".join(lines))
     meta = {
         "orbit": orbit,

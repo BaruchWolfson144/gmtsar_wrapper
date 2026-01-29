@@ -41,8 +41,8 @@ def download_asf_data(polygon: str, start_date: str, end_date: str,
 
     Args:
         polygon: WKT polygon string (e.g., "POLYGON((-157 18,-154.2 18,...))")
-        start_date: Start date (e.g., "January+1,+2018")
-        end_date: End date (e.g., "September+30,+2018")
+        start_date: Start date in ISO format (e.g., "2020-01-01T00:00:00Z")
+        end_date: End date in ISO format (e.g., "2020-12-31T23:59:59Z")
         relative_orbit: Path/orbit number (e.g., 124)
         username: ASF EarthData username
         password: ASF EarthData password
@@ -85,7 +85,7 @@ def download_asf_data(polygon: str, start_date: str, end_date: str,
     base_url = "https://api.daac.asf.alaska.edu/services/search/param"
     params = {
         "platform": "Sentinel-1A,Sentinel-1B",
-        "polygon": polygon,
+        "intersectsWith": polygon,
         "processingLevel": "SLC",
         "relativeOrbit": str(relative_orbit),
         "start": start_date,
@@ -103,6 +103,7 @@ def download_asf_data(polygon: str, start_date: str, end_date: str,
     csv_file = output_dir / "asf_search.csv"
     try:
         logger.info(f"Querying ASF API...")
+        logger.debug(f"Full query URL: {query_url}")
         urllib.request.urlretrieve(query_url, csv_file)
         logger.info(f"  Saved search results to {csv_file}")
     except Exception as e:
@@ -171,12 +172,14 @@ def download_asf_data(polygon: str, start_date: str, end_date: str,
         ]
 
         try:
-            result = subprocess.run(wget_cmd, capture_output=True, text=True, timeout=3600)
+            import os
+            env = os.environ.copy()
+            result = subprocess.run(wget_cmd, capture_output=True, text=True, timeout=3600, env=env)
             if result.returncode == 0:
                 # Unzip the file
                 logger.info(f"    Unzipping...")
                 unzip_cmd = ['unzip', '-q', str(output_path) + '.zip', '-d', str(output_dir)]
-                subprocess.run(unzip_cmd, check=True)
+                subprocess.run(unzip_cmd, check=True, env=env)
 
                 # Remove zip file
                 (output_path.parent / (output_path.name + '.zip')).unlink()

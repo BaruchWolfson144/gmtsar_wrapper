@@ -195,7 +195,32 @@ class InSARPipeline:
         logger.info("STAGE 03: Creating DEM Grid")
         logger.info("=" * 70)
 
+        # Try to get bbox as a list first, or build it from individual parameters
         bbox = bbox or self.state.get_parameter("bbox")
+
+        # If bbox not found as list, try to get from dem.* or individual parameters
+        if not bbox:
+            dem_config = self.state.get_parameter("dem")
+            if dem_config and isinstance(dem_config, dict):
+                # Extract from dem dict
+                minlon = dem_config.get("minlon")
+                maxlon = dem_config.get("maxlon")
+                minlat = dem_config.get("minlat")
+                maxlat = dem_config.get("maxlat")
+                if all(v is not None for v in [minlon, maxlon, minlat, maxlat]):
+                    bbox = [minlon, maxlon, minlat, maxlat]
+                # Also get mode from dem dict if not provided
+                if mode is None and "mode" in dem_config:
+                    mode = dem_config["mode"]
+            else:
+                # Try individual parameters
+                minlon = self.state.get_parameter("minlon")
+                maxlon = self.state.get_parameter("maxlon")
+                minlat = self.state.get_parameter("minlat")
+                maxlat = self.state.get_parameter("maxlat")
+                if all(v is not None for v in [minlon, maxlon, minlat, maxlat]):
+                    bbox = [minlon, maxlon, minlat, maxlat]
+
         mode = mode or self.state.get_parameter("mode", 1)
         make_dem_path = make_dem_path or self.state.get_parameter("make_dem_path")
 
@@ -243,8 +268,8 @@ class InSARPipeline:
         start_date = start_date or self.state.get_parameter("start_date")
         end_date = end_date or self.state.get_parameter("end_date")
         relative_orbit = relative_orbit or self.state.get_parameter("relative_orbit")
-        username = username or self.state.get_parameter("asf_username")
-        password = password or self.state.get_parameter("asf_password")
+        username = username or self.state.get_parameter("username") or self.state.get_parameter("asf_username")
+        password = password or self.state.get_parameter("password") or self.state.get_parameter("asf_password")
         polarization = polarization or self.state.get_parameter("polarization", "VV")
         orbit = orbit or self.state.get_parameter("orbit", "asc")
 
@@ -407,16 +432,29 @@ class InSARPipeline:
         # Get parameters from state if not provided
         orbit = orbit or self.state.get_parameter("orbit", "asc")
         master = master or self.state.get_parameter("master")
-        threshold_time = threshold_time or self.state.get_parameter("threshold_time", 30)
-        threshold_baseline = threshold_baseline or self.state.get_parameter("threshold_baseline", 100)
-        config_path = config_path or self.state.get_parameter("config_path")
-        subswath_list = subswath_list or self.state.get_parameter("subswath_list", ["F1", "F2", "F3"])
+
+        # Try to get parameters from interferograms dict first, then from root level
+        interferograms_config = self.state.get_parameter("interferograms", {})
+        threshold_time = threshold_time or interferograms_config.get("threshold_time") or self.state.get_parameter("threshold_time", 30)
+        threshold_baseline = threshold_baseline or interferograms_config.get("threshold_baseline") or self.state.get_parameter("threshold_baseline", 100)
+        config_path = config_path or interferograms_config.get("config_path") or self.state.get_parameter("config_path")
+
+        # Try to get subswath_list from preprocessing dict first
+        preprocessing_config = self.state.get_parameter("preprocessing", {})
+        subswath_list = subswath_list or preprocessing_config.get("subswath_list") or self.state.get_parameter("subswath_list", ["F1", "F2", "F3"])
 
         if not master:
             raise ValueError("Master image not defined. Run stage 05 first or specify manually.")
 
         if not config_path:
             raise ValueError("config_path is required for stage 06. Provide batch_tops.config file path.")
+
+        # Convert config_path to absolute Path if needed
+        config_path = Path(config_path)
+        if not config_path.is_absolute():
+            # If relative, make it relative to project_root
+            config_path = self.project_root / config_path
+        config_path = config_path.resolve()
 
         results = {}
         for sub in subswath_list:

@@ -20,15 +20,19 @@ except ImportError:
     HAS_MATPLOTLIB = False
 
 def run_cmd(cmd, cwd=None):
-    proc = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    import os
+    # Preserve the full environment including PATH
+    env = os.environ.copy()
+    proc = subprocess.run(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 def preparing_intf_list(project_root: Path, orbit: str, sub: str, threshold_time: int, threshold_baseline: int):
     #cmd = f"select_pairs.csh baseline_table.dat {threshold_time} {threshold_baseline}"
     #run_cmd(cmd=cmd, cwd=subswath)
 
-    # re-write select_pairs.csh unstable script 
-    baseline_table = project_root / orbit / sub / "baseline_table.dat"
+    # re-write select_pairs.csh unstable script
+    baseline_table = project_root / orbit / sub / "raw" / "baseline_table.dat"
+    intf_in_path = project_root / orbit / sub / "intf.in"
     dt = float(threshold_time)
     db = float(threshold_baseline)
 
@@ -36,19 +40,27 @@ def preparing_intf_list(project_root: Path, orbit: str, sub: str, threshold_time
     years = []
     baselines = []
 
+    # Check if baseline_table.dat exists
+    if not baseline_table.exists():
+        raise FileNotFoundError(
+            f"baseline_table.dat not found at {baseline_table}\n"
+            f"This file should have been created during Stage 05 (preprocessing).\n"
+            f"Please ensure Stage 05 completed successfully before running Stage 06.\n"
+            f"Check that you're using the correct project_root directory."
+        )
 
     with open(baseline_table) as f:
         for line in f:
             if line.strip():
                 parts = line.split()
                 name = parts[0]
-                t = float(parts[2])       
+                t = float(parts[2])
                 b = float(parts[4])
                 lines.append((name, t, b))
-                years.append(2014 + t / 365.25)  
+                years.append(2014 + t / 365.25)
                 baselines.append(b)
 
-    with open("intf.in", "w") as fout:
+    with open(intf_in_path, "w") as fout:
         num_intf = 0
         for i, (n1, t1, b1) in enumerate(lines):
             for j, (n2, t2, b2) in enumerate(lines):
@@ -73,6 +85,11 @@ def show_intf(dt, db, years, lines, baselines):
     """Display interferogram baseline plot (requires matplotlib)"""
     if not HAS_MATPLOTLIB:
         print("Note: matplotlib not available, skipping baseline plot")
+        return
+
+    # Check if we have data to plot
+    if not years or not baselines:
+        print("Note: No baseline data available for plotting")
         return
 
     # graph plotting
@@ -124,7 +141,9 @@ def copy_intf(project_root: Path, orbit: str):
 def copy_and_set_config(project_root: Path, orbit: str, config_path, master: str):
         for sub in ("F1", "F2", "F3"):
             dst = project_root / orbit / sub / "batch_tops.config"
-            shutil.copy2(config_path, dst)
+            # Skip if source and destination are the same file
+            if Path(config_path).resolve() != dst.resolve():
+                shutil.copy2(config_path, dst)
             lines = []
             for line in dst.read_text().splitlines():
                 if line.strip().startswith("master_image"):
@@ -161,16 +180,29 @@ def copy_and_set_config(project_root: Path, orbit: str, config_path, master: str
         return config_info
 
 def make_intf(project_root, orbit, sub="F1"):
-    cmd = "intf_tops_parallel.csh intf.in batch_tops.config 6 >& itp.log &"
-    cwd = project_root / orbit / sub 
+    # Run interferogram generation WITHOUT background mode (&)
+    # Redirect output to log file properly
+    cmd = "intf_tops_parallel.csh intf.in batch_tops.config 6"
+    cwd = project_root / orbit / sub
     pc, out, err = run_cmd(cmd, cwd)
+
+    # Write log file
+    log_file = cwd / "itp.log"
+    with open(log_file, "w") as f:
+        f.write(f"Command: {cmd}\n")
+        f.write(f"Return code: {pc}\n\n")
+        f.write("=== STDOUT ===\n")
+        f.write(out)
+        f.write("\n\n=== STDERR ===\n")
+        f.write(err)
+
     make_intf_info = {
         "command": cmd,
         "subswath": sub,
-        "log_file": "itp.log",
+        "log_file": str(log_file),
         "return_code": pc,
-        "stdout": out.strip(),
-        "stderr": err.strip(),
+        "stdout": out.strip()[:500],  # Limit output length
+        "stderr": err.strip()[:500],
     }
     return make_intf_info
 
@@ -200,10 +232,24 @@ def write_meta_log(project_root: Path, orbit: str, subswath: str, intf_list_info
 
 def run_intf(project_root, orbit, sub, threshold_time, threshold_baseline, config_path, master):
     lines, years, baselines, intf_list_info = preparing_intf_list(project_root, orbit, sub, threshold_time, threshold_baseline)
+
+    # Check if any interferograms were created
+    num_intf = intf_list_info.get("num_interferograms", 0)
+    if num_intf == 0:
+        print(f"WARNING: No interferogram pairs found for subswath {sub}!")
+        print(f"  Threshold time: {threshold_time} days")
+        print(f"  Threshold baseline: {threshold_baseline} meters")
+        print(f"  Number of scenes: {len(lines)}")
+        if len(lines) < 2:
+            print(f"  ERROR: Need at least 2 scenes to create interferograms. Only {len(lines)} scene(s) available.")
+        print("  Consider:")
+        print("    - Increasing threshold_time and/or threshold_baseline")
+        print("    - Downloading more scenes from different dates")
+
     show_intf(threshold_time, threshold_baseline, years, lines, baselines)
     copy_intf_info = copy_intf(project_root, orbit)
     config_info = copy_and_set_config(project_root, orbit, config_path, master)
-    make_intf_info = make_intf(project_root, orbit, sub="F1")
+    make_intf_info = make_intf(project_root, orbit, sub=sub)
     return(write_meta_log(project_root, orbit, sub, intf_list_info, copy_intf_info, config_info, make_intf_info))
 
 

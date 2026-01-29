@@ -13,7 +13,10 @@ import sys
 
 
 def run_cmd(cmd, cwd=None):
-    proc = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    import os
+    # Preserve the full environment including PATH
+    env = os.environ.copy()
+    proc = subprocess.run(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 def make_landmask(project_root: Path, orbit: Path):

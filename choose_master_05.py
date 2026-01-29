@@ -13,7 +13,10 @@ import re
 
 
 def run_cmd(cmd, cwd=None):
-    proc = subprocess.run(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    import os
+    # Preserve the full environment including PATH
+    env = os.environ.copy()
+    proc = subprocess.run(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -36,10 +39,16 @@ def prepare_raw_links(project_root: Path, orbit: str, subswath: str):
     raw_dir = project_root / orbit / subswath / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    def link_many(pattern: str):
+    def link_many(pattern: str, fallback_pattern: str = None):
         files = glob.glob(pattern)
+
+        # If no files found and fallback pattern provided, try fallback
+        if not files and fallback_pattern:
+            files = glob.glob(fallback_pattern)
+
         if not files:
-            raise RuntimeError(f"No files matched: {pattern}")
+            raise RuntimeError(f"No files matched: {pattern}" +
+                             (f" or {fallback_pattern}" if fallback_pattern else ""))
 
         for f in files:
             src = Path(f)
@@ -51,19 +60,25 @@ def prepare_raw_links(project_root: Path, orbit: str, subswath: str):
             except Exception:
                 shutil.copy2(src, dst)
 
-    # XML
+    # XML - frames are numbered F001, F002, F003, etc. (3-digit frame numbers)
+    # F1/F2/F3 refer to subswaths (iw1/iw2/iw3), NOT frames
+    # If no frame subdirs exist, look directly in data/
     link_many(
-        str(project_root / orbit / "data" / "F*" / "*.SAFE" / "*" / f"*iw{iw}*vv*xml")
+        str(project_root / orbit / "data" / "F[0-9][0-9][0-9]" / "*.SAFE" / "*" / f"*iw{iw}*vv*xml"),
+        str(project_root / orbit / "data" / "*.SAFE" / "*" / f"*iw{iw}*vv*xml")
     )
 
-    # TIFF
+    # TIFF - frames are numbered F001, F002, F003, etc. (3-digit frame numbers)
+    # If no frame subdirs exist, look directly in data/
     link_many(
-        str(project_root / orbit / "data" / "F*" / "*.SAFE" / "*" / f"*iw{iw}*vv*tiff")
+        str(project_root / orbit / "data" / "F[0-9][0-9][0-9]" / "*.SAFE" / "*" / f"*iw{iw}*vv*tiff"),
+        str(project_root / orbit / "data" / "*.SAFE" / "*" / f"*iw{iw}*vv*tiff")
     )
 
-    # EOF
+    # EOF - try data dir first, then orbit dir
     link_many(
-        str(project_root / orbit / "data" / "*EOF")
+        str(project_root / orbit / "data" / "*EOF"),
+        str(project_root / orbit / "orbit" / "*EOF")
     )
 
     # DEM
@@ -83,8 +98,32 @@ def generate_data_in(raw_dir: Path):
     return(run_cmd(cmd,  cwd=raw_dir))
 
 def run_preproc_mode(raw_dir: Path, mode: int):
-    cmd = f"preproc_batch_tops.csh data.in dem.grd {mode} >& pbt_mode{mode}.log"
-    return(run_cmd(cmd,  cwd=raw_dir))
+    """
+    Run preproc_batch_tops.csh in the specified mode.
+
+    Args:
+        raw_dir: Directory containing data.in, dem.grd, and raw data files
+        mode: Preprocessing mode (1 or 2)
+              Mode 1: Creates baseline_table.dat and performs initial alignment
+              Mode 2: Performs final preprocessing with master as reference
+
+    Returns:
+        tuple: (returncode, stdout, stderr)
+    """
+    cmd = f"preproc_batch_tops.csh data.in dem.grd {mode}"
+    rc, stdout, stderr = run_cmd(cmd, cwd=raw_dir)
+
+    # Write output to log file
+    log_file = raw_dir / f"pbt_mode{mode}.log"
+    with open(log_file, "w") as f:
+        f.write(f"Command: {cmd}\n")
+        f.write(f"Return code: {rc}\n\n")
+        f.write("=== STDOUT ===\n")
+        f.write(stdout)
+        f.write("\n\n=== STDERR ===\n")
+        f.write(stderr)
+
+    return rc, stdout, stderr
 
 def select_master(raw_dir: Path):
     baseline_table = raw_dir / "baseline_table.dat"
@@ -103,21 +142,56 @@ def select_master(raw_dir: Path):
     }
 
 def master_to_first_line(raw_dir: Path, master):
+    """
+    Reorder data.in so the master scene's raw filename entry is first.
+
+    The master parameter is a stem name like "S1_20200104_ALL_F1" from baseline_table.dat.
+    We need to find the corresponding raw filename line in data.in which contains
+    the same date (e.g., "s1a-iw1-slc-vv-20200104t043025-...").
+
+    Args:
+        raw_dir: Directory containing data.in
+        master: Stem name of master scene (e.g., "S1_20200104_ALL_F1")
+
+    Returns:
+        0 on success
+
+    Raises:
+        ValueError: If master's date cannot be found in data.in
+    """
     baseline_table = raw_dir / "baseline_table.dat"
     data_file = raw_dir / "data.in"
+
+    # Extract date from master stem (format: S1_YYYYMMDD_ALL_F#)
+    # Example: S1_20200104_ALL_F1 -> 20200104
+    date_match = re.search(r'_(\d{8})_', master)
+    if not date_match:
+        raise ValueError(f"Could not extract date from master stem: {master}")
+
+    master_date = date_match.group(1)
+
     with open(data_file, "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
-        pattern = re.compile(rf"^.*-{re.escape(master)}")
-        master_line = None
-        for line in lines:
-            if pattern.search(line):
-                master_line = line
-                break
-        if master_line is None:
-            raise ValueError(f"Master name '{master}' didn't found in {data_file} file")
-        new_lines = [master_line] + [l for l in lines if l != master_line]
+
+    # Find the line containing the master date
+    master_line = None
+    for line in lines:
+        if master_date in line:
+            master_line = line
+            break
+
+    if master_line is None:
+        raise ValueError(
+            f"Master date '{master_date}' (from stem '{master}') "
+            f"not found in {data_file}"
+        )
+
+    # Reorder: master line first, then all other lines
+    new_lines = [master_line] + [l for l in lines if l != master_line]
+
     with open(data_file, "w", encoding="utf-8") as f:
         f.write("\n".join(new_lines))
+
     return 0
         
         
@@ -160,23 +234,39 @@ def run_preprocess_subswath(
     orbit: str,
     subswath: str,
 ):
-    raw_dir = project_root / orbit / subswath / "raw" 
+    raw_dir = project_root / orbit / subswath / "raw"
 
     prepare_raw_links(project_root, orbit, subswath)
 
-    rc, _, _ = generate_data_in(raw_dir)
+    rc, stdout, stderr = generate_data_in(raw_dir)
     data_in_info = "ok" if rc == 0 else "failed"
+    if rc != 0:
+        raise RuntimeError(f"Failed to generate data.in file. Error: {stderr}")
 
-    rc, _, _ = run_preproc_mode(raw_dir, mode=1)
+    rc, stdout, stderr = run_preproc_mode(raw_dir, mode=1)
     preproc_1 = "ok" if rc == 0 else "failed"
+    if rc != 0:
+        raise RuntimeError(f"Preprocessing mode 1 failed. Error: {stderr}")
+
+    # Verify baseline_table.dat was created
+    baseline_table = raw_dir / "baseline_table.dat"
+    if not baseline_table.exists():
+        raise FileNotFoundError(
+            f"baseline_table.dat not found after preprocessing mode 1. "
+            f"Expected at: {baseline_table}"
+        )
 
     master_info = select_master(raw_dir)
 
     r = master_to_first_line(raw_dir, master_info["master"])
     master_promoted = "ok" if r == 0 else "failed"
+    if r != 0:
+        raise RuntimeError("Failed to promote master to first line in data.in")
 
-    rc, _, _ = run_preproc_mode(raw_dir, mode=2)
+    rc, stdout, stderr = run_preproc_mode(raw_dir, mode=2)
     preproc_2 = "ok" if rc == 0 else "failed"
+    if rc != 0:
+        raise RuntimeError(f"Preprocessing mode 2 failed. Error: {stderr}")
 
     return(write_meta_log(
         project_root,

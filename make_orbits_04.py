@@ -32,7 +32,10 @@ import datetime
 
 def run_cmd(cmd):
     """Execute shell command and return results."""
-    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    import os
+    # Preserve the full environment including PATH
+    env = os.environ.copy()
+    proc = subprocess.run(cmd, shell=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 def create_orbit_list(project_root: Path, orbit: str = "asc"):
@@ -111,17 +114,36 @@ def download_orbits_simple(orbit_list: Path, mode: int = 1):
     Returns:
         tuple: (success, commands list)
     """
-    commands = []
-    cmd = f"download_sentinel_orbits_linux.csh {orbit_list} {mode}"
-    rc, out, err = run_cmd(cmd)
-    commands.append({
-        "cmd": cmd,
-        "returncode": rc,
-        "stdout": out.strip(),
-        "stderr": err.strip()
-    })
+    import os
 
-    return rc == 0, commands
+    # The script downloads orbit files to the current directory
+    # We need to run it from the data directory
+    data_dir = orbit_list.parent
+    orbit_dir = data_dir.parent / "orbit"
+    orbit_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save current directory
+    original_dir = Path.cwd()
+
+    try:
+        # Change to orbit directory where files should be downloaded
+        os.chdir(orbit_dir)
+
+        commands = []
+        cmd = f"download_sentinel_orbits_linux.csh {orbit_list} {mode}"
+        rc, out, err = run_cmd(cmd)
+        commands.append({
+            "cmd": cmd,
+            "returncode": rc,
+            "stdout": out.strip(),
+            "stderr": err.strip()
+        })
+
+        return rc == 0, commands
+
+    finally:
+        # Always restore original directory
+        os.chdir(original_dir)
 
 
 def write_meta_log(

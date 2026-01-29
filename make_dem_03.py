@@ -24,7 +24,10 @@ import shutil
 
 def run_cmd(cmd):
     """Execute shell command and return results."""
-    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    import os
+    # Preserve the full environment including PATH
+    env = os.environ.copy()
+    proc = subprocess.run(cmd, shell=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -46,11 +49,31 @@ def try_make_dem_csh(project_root: Path, bbox, mode, make_dem_path=None):
     if not make_dem_path:
         return None, "make_dem.csh not found in PATH"
 
-    cmd = f"{make_dem_path} {bbox['minlon']} {bbox['maxlon']} {bbox['minlat']} {bbox['maxlat']} {mode}"
-    rc, out, err = run_cmd(cmd)
-    if rc != 0:
-        return None, f"make_dem.csh failed (rc={rc}): {err.strip()}"
-    return Path.cwd(), f"Created via make_dem.csh at {str(Path.cwd())}"
+    # make_dem.csh needs to run in the topo directory
+    topo_dir = project_root / "asc" / "topo"
+    topo_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save current directory and change to topo
+    original_dir = Path.cwd()
+    try:
+        import os
+        os.chdir(topo_dir)
+
+        cmd = f"{make_dem_path} {bbox['minlon']} {bbox['maxlon']} {bbox['minlat']} {bbox['maxlat']} {mode}"
+        rc, out, err = run_cmd(cmd)
+        if rc != 0:
+            return None, f"make_dem.csh failed (rc={rc}): {err.strip()}"
+
+        # make_dem.csh creates dem.grd in the current working directory
+        dem_file = topo_dir / "dem.grd"
+        if not dem_file.exists():
+            return None, f"make_dem.csh completed but dem.grd not found at {dem_file}"
+
+        return dem_file, f"Created via make_dem.csh at {str(dem_file)}"
+
+    finally:
+        # Always restore original directory
+        os.chdir(original_dir)
 
 
 def link_dem_to_project(project_root: Path, dem_path: Path):
