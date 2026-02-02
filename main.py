@@ -28,6 +28,8 @@ import json
 import logging
 import argparse
 import sys
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -160,6 +162,20 @@ class InSARPipeline:
 
         logger.info(f"Configuration loaded from {config_path}")
 
+    def _get_parallel_config(self) -> Dict[str, Any]:
+        """Get parallelization configuration with defaults for backward compatibility."""
+        parallel_config = self.state.get_parameter("parallel", {})
+
+        # Default values ensure backward compatibility
+        num_cores = parallel_config.get("num_cores", 6)
+        if num_cores == "auto":
+            num_cores = multiprocessing.cpu_count()
+
+        return {
+            "num_cores": min(int(num_cores), 16),  # Cap at 16 for safety
+            "parallel_subswaths": parallel_config.get("parallel_subswaths", False),
+        }
+
     def stage_01_create_project(self, orbit: Optional[str] = None) -> Dict[str, Any]:
         """Stage 01: Create project directory structure"""
         logger.info("=" * 70)
@@ -188,12 +204,16 @@ class InSARPipeline:
         self,
         bbox: Optional[List[float]] = None,
         mode: Optional[int] = None,
+        orbit: Optional[str] = None,
         make_dem_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """Stage 03: Create DEM grid"""
         logger.info("=" * 70)
         logger.info("STAGE 03: Creating DEM Grid")
         logger.info("=" * 70)
+
+        # Get orbit parameter
+        orbit = orbit or self.state.get_parameter("orbit", "asc")
 
         # Try to get bbox as a list first, or build it from individual parameters
         bbox = bbox or self.state.get_parameter("bbox")
@@ -234,7 +254,7 @@ class InSARPipeline:
             "maxlat": bbox[3]
         }
 
-        logp, result_msg = run_make_dem(self.project_root, bbox_dict, mode, make_dem_path)
+        logp, result_msg = run_make_dem(self.project_root, bbox_dict, mode, orbit=orbit, make_dem_path=make_dem_path)
 
         outputs = {
             "dem_created": True,
@@ -456,19 +476,60 @@ class InSARPipeline:
             config_path = self.project_root / config_path
         config_path = config_path.resolve()
 
+        # Get parallel configuration
+        parallel_config = self._get_parallel_config()
+        parallel_subswaths = parallel_config.get("parallel_subswaths", False)
+        num_cores = parallel_config.get("num_cores", 6)
+
         results = {}
-        for sub in subswath_list:
-            logger.info(f"Running interferograms for subswath {sub}")
-            logp = run_intf(
-                self.project_root,
-                orbit,
-                sub,
-                threshold_time,
-                threshold_baseline,
-                Path(config_path),
-                master
-            )
-            results[sub] = {"log_path": str(logp) if logp else None}
+
+        if parallel_subswaths and len(subswath_list) > 1:
+            logger.info(f"Running subswaths in PARALLEL mode ({len(subswath_list)} subswaths)")
+            cores_per_subswath = max(2, num_cores // len(subswath_list))
+            logger.info(f"Allocating {cores_per_subswath} cores per subswath")
+
+            # Run subswaths in parallel
+            with ProcessPoolExecutor(max_workers=len(subswath_list)) as executor:
+                futures = {}
+                for sub in subswath_list:
+                    future = executor.submit(
+                        run_intf,
+                        self.project_root,
+                        orbit,
+                        sub,
+                        threshold_time,
+                        threshold_baseline,
+                        Path(config_path),
+                        master,
+                        cores_per_subswath
+                    )
+                    futures[sub] = future
+
+                # Collect results
+                for sub, future in futures.items():
+                    try:
+                        logp = future.result()
+                        results[sub] = {"log_path": str(logp) if logp else None, "status": "success"}
+                        logger.info(f"Subswath {sub} completed successfully")
+                    except Exception as e:
+                        logger.error(f"Subswath {sub} failed: {e}")
+                        results[sub] = {"log_path": None, "status": "failed", "error": str(e)}
+        else:
+            # Sequential processing (original behavior for backward compatibility)
+            logger.info("Running subswaths SEQUENTIALLY")
+            for sub in subswath_list:
+                logger.info(f"Running interferograms for subswath {sub}")
+                logp = run_intf(
+                    self.project_root,
+                    orbit,
+                    sub,
+                    threshold_time,
+                    threshold_baseline,
+                    Path(config_path),
+                    master,
+                    num_cores
+                )
+                results[sub] = {"log_path": str(logp) if logp else None}
 
         outputs = {
             "interferograms_complete": True,
@@ -476,6 +537,8 @@ class InSARPipeline:
             "master": master,
             "threshold_time": threshold_time,
             "threshold_baseline": threshold_baseline,
+            "parallel_mode": parallel_subswaths,
+            "num_cores": num_cores,
             "results": results
         }
 
@@ -534,6 +597,11 @@ class InSARPipeline:
         use_landmask = use_landmask if use_landmask is not None else self.state.get_parameter("use_landmask", False)
         use_mask_def = use_mask_def if use_mask_def is not None else self.state.get_parameter("use_mask_def", True)
 
+        # Get parallel configuration
+        parallel_config = self._get_parallel_config()
+        num_cores = parallel_config.get("num_cores", 6)
+        logger.info(f"Using {num_cores} cores for unwrapping")
+
         logp, result_msg = run_unwrap(
             self.project_root,
             orbit,
@@ -541,7 +609,8 @@ class InSARPipeline:
             corr_threshold=corr_threshold,
             max_dis_threshold=max_dis_threshold,
             use_landmask=use_landmask,
-            use_mask_def=use_mask_def
+            use_mask_def=use_mask_def,
+            num_cores=num_cores
         )
 
         outputs = {
@@ -549,6 +618,7 @@ class InSARPipeline:
             "coherence_threshold": coherence_threshold,
             "corr_threshold": corr_threshold,
             "max_dis_threshold": max_dis_threshold,
+            "num_cores": num_cores,
             "log_path": str(logp) if logp else None
         }
 

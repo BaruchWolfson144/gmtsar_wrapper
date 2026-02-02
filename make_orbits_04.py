@@ -27,7 +27,10 @@ Reference:
 import argparse
 import subprocess
 import json
+import sys
+import re
 from pathlib import Path
+from collections import defaultdict
 import datetime
 
 def run_cmd(cmd):
@@ -199,50 +202,165 @@ def download_orbits_with_reframe(project_root: Path, orbit: str, orbit_list: Pat
     Returns:
         tuple: (success, commands list, result message)
     """
+    import os
+
     commands = []
     result_msg = ""
 
-    # Step 1: Run organize_files_tops_linux.csh with mode 1
-    # This downloads orbits and prepares files
-    cmd1 = f"organize_files_tops_linux.csh {orbit_list} {pins_file} 1"
-    rc1, out1, err1 = run_cmd(cmd1)
-    commands.append({
-        "cmd": cmd1,
-        "returncode": rc1,
-        "stdout": out1.strip(),
-        "stderr": err1.strip()
-    })
-
-    if rc1 != 0:
-        result_msg = f"organize_files_tops mode 1 failed: {err1}"
-        return False, commands, result_msg
-
-    # Step 2: Run organize_files_tops_linux.csh with mode 2
-    # This creates stitched/cropped SAFE directories
-    cmd2 = f"organize_files_tops_linux.csh {orbit_list} {pins_file} 2"
-    rc2, out2, err2 = run_cmd(cmd2)
-    commands.append({
-        "cmd": cmd2,
-        "returncode": rc2,
-        "stdout": out2.strip(),
-        "stderr": err2.strip()
-    })
-
-    if rc2 != 0:
-        result_msg = f"organize_files_tops mode 2 failed: {err2}"
-        return False, commands, result_msg
-
-    # Check for Fxxxx_Fxxxx directories created (reframed data)
+    # organize_files_tops_linux.csh creates output in current working directory
+    # We need to run it from the data directory so outputs go to the right place
     data_dir = project_root / orbit / "data"
-    reframed_dirs = list(data_dir.glob("F*_F*"))
+    original_dir = Path.cwd()
 
-    if reframed_dirs:
-        result_msg = f"Reframing successful. Created {len(reframed_dirs)} reframed directories: "
-        result_msg += ", ".join([d.name for d in reframed_dirs])
-    else:
-        result_msg = "Warning: No Fxxxx_Fxxxx directories found after reframing"
+    try:
+        os.chdir(data_dir)
 
-    return True, commands, result_msg
+        # Step 1: Run organize_files_tops_linux.csh with mode 1
+        # This downloads orbits and prepares files
+        cmd1 = f"organize_files_tops_linux.csh {orbit_list} {pins_file} 1"
+        rc1, out1, err1 = run_cmd(cmd1)
+        commands.append({
+            "cmd": cmd1,
+            "returncode": rc1,
+            "stdout": out1.strip(),
+            "stderr": err1.strip()
+        })
+
+        if rc1 != 0:
+            result_msg = f"organize_files_tops mode 1 failed: {err1}"
+            return False, commands, result_msg
+
+        # Step 2: Run organize_files_tops_linux.csh with mode 2
+        # This creates stitched/cropped SAFE directories
+        cmd2 = f"organize_files_tops_linux.csh {orbit_list} {pins_file} 2"
+        rc2, out2, err2 = run_cmd(cmd2)
+        commands.append({
+            "cmd": cmd2,
+            "returncode": rc2,
+            "stdout": out2.strip(),
+            "stderr": err2.strip()
+        })
+
+        if rc2 != 0:
+            result_msg = f"organize_files_tops mode 2 failed: {err2}"
+            return False, commands, result_msg
+
+        # Check for Fxxxx_Fxxxx directories created (reframed data)
+        reframed_dirs = list(data_dir.glob("F*_F*"))
+
+        if reframed_dirs:
+            result_msg = f"Reframing successful. Created {len(reframed_dirs)} reframed directories: "
+            result_msg += ", ".join([d.name for d in reframed_dirs])
+        else:
+            result_msg = "Warning: No Fxxxx_Fxxxx directories found after reframing"
+
+        return True, commands, result_msg
+
+    finally:
+        # Always restore original directory
+        os.chdir(original_dir)
+
+
+def validate_pins_coverage(project_root: Path, orbit: str,
+                           pin1_lat: float, pin2_lat: float,
+                           margin: float = 0.1) -> dict:
+    """
+    Validate that pins are within the coverage of ALL SAFE frames.
+
+    This prevents the issue where pins extend beyond some frames' footprints,
+    causing those dates to fail during reframing.
+
+    Args:
+        project_root: Root directory of the project
+        orbit: Orbit directory (asc/des)
+        pin1_lat, pin2_lat: Pin latitudes
+        margin: Safety margin in degrees (default: 0.1)
+
+    Returns:
+        dict with 'valid' boolean and 'message' string
+    """
+    data_dir = project_root / orbit / "data"
+    south_pin = min(pin1_lat, pin2_lat)
+    north_pin = max(pin1_lat, pin2_lat)
+
+    # Scan all SAFE directories for footprints
+    safe_dirs = sorted(data_dir.glob("S1*.SAFE"))
+    if not safe_dirs:
+        return {'valid': False, 'message': f"No SAFE directories found in {data_dir}"}
+
+    footprints_by_date = defaultdict(list)
+
+    for safe_dir in safe_dirs:
+        manifest = safe_dir / "manifest.safe"
+        if not manifest.exists():
+            continue
+
+        try:
+            content = manifest.read_text()
+            match = re.search(r'<gml:coordinates>([^<]+)</gml:coordinates>', content)
+            if not match:
+                continue
+
+            coords = []
+            for pair in match.group(1).strip().split():
+                lat, lon = pair.split(',')
+                coords.append(float(lat))
+
+            min_lat = min(coords)
+            max_lat = max(coords)
+
+            # Extract date from SAFE name
+            date_match = re.search(r'_(\d{8})T', safe_dir.name)
+            date = date_match.group(1) if date_match else safe_dir.name
+            footprints_by_date[date].append({'min_lat': min_lat, 'max_lat': max_lat})
+        except Exception:
+            continue
+
+    if not footprints_by_date:
+        return {'valid': False, 'message': "Could not parse any SAFE footprints"}
+
+    # Calculate safe coverage (intersection of all dates)
+    date_coverages = {}
+    for date, frames in footprints_by_date.items():
+        combined_min = min(f['min_lat'] for f in frames)
+        combined_max = max(f['max_lat'] for f in frames)
+        date_coverages[date] = {'min_lat': combined_min, 'max_lat': combined_max}
+
+    safe_min_lat = max(dc['min_lat'] for dc in date_coverages.values())
+    safe_max_lat = min(dc['max_lat'] for dc in date_coverages.values())
+
+    issues = []
+
+    # Check southern pin
+    if south_pin < safe_min_lat:
+        diff = safe_min_lat - south_pin
+        issues.append(f"Southern pin ({south_pin:.4f}°) is {diff:.4f}° below safe minimum ({safe_min_lat:.4f}°)")
+
+    # Check northern pin
+    if north_pin > safe_max_lat:
+        diff = north_pin - safe_max_lat
+        affected_dates = len([d for d, dc in date_coverages.items() if dc['max_lat'] < north_pin])
+        issues.append(f"Northern pin ({north_pin:.4f}°) is {diff:.4f}° above safe maximum ({safe_max_lat:.4f}°). "
+                     f"{affected_dates} dates would fail!")
+
+    if issues:
+        return {
+            'valid': False,
+            'message': "PINS VALIDATION FAILED:\n" + "\n".join(f"  - {i}" for i in issues) +
+                       f"\n\nSuggested safe range: {safe_min_lat + margin:.2f}° to {safe_max_lat - margin:.2f}°",
+            'safe_min': safe_min_lat,
+            'safe_max': safe_max_lat,
+            'num_dates': len(date_coverages)
+        }
+
+    return {
+        'valid': True,
+        'message': f"Pins validated: within coverage of all {len(date_coverages)} dates "
+                   f"(safe range: {safe_min_lat:.4f}° to {safe_max_lat:.4f}°)",
+        'safe_min': safe_min_lat,
+        'safe_max': safe_max_lat,
+        'num_dates': len(date_coverages)
+    }
 
 
 def run_download_orbits(
@@ -281,6 +399,13 @@ def run_download_orbits(
         # Validate pin coordinates
         if not all([pin1_lon, pin1_lat, pin2_lon, pin2_lat]):
             return False, "All pin coordinates required for reframing", None
+
+        # Pre-check: Validate pins against SAFE footprints
+        print("Validating pins against SAFE footprints...")
+        validation = validate_pins_coverage(project_root, orbit, pin1_lat, pin2_lat)
+        print(f"  {validation['message']}")
+        if not validation['valid']:
+            return False, validation['message'], None
 
         # Create pins.ll file
         pins_file = create_pins_file(project_root, orbit, pin1_lon, pin1_lat,

@@ -123,7 +123,7 @@ def make_mask_def(project_root: Path, orbit: Path, coherence_threshold: float = 
     }
     return meta 
 
-def unwrap(project_root: Path, orbit: Path, corr_threshold: float, max_dis_threshold: float, landmask: bool, mask_def: bool = True):
+def unwrap(project_root: Path, orbit: Path, corr_threshold: float, max_dis_threshold: float, landmask: bool, mask_def: bool = True, num_cores: int = 6):
     merge_dir = project_root / orbit / "merge"
     #make intflist
     cmd = "ls -d 201* > intflist"
@@ -160,10 +160,10 @@ def unwrap(project_root: Path, orbit: Path, corr_threshold: float, max_dis_thres
         if rc != 0:
             print(f"Error making script executable: {err}")
             return
-        cmd_unwrap = "unwrap_parallel.csh intflist 6"
+        cmd_unwrap = f"unwrap_parallel.csh intflist {num_cores}"
         rc, out, err = run_cmd(cmd_unwrap, cwd=merge_dir)
         if rc != 0:
-            print(f"Error making script executable: {err}")
+            print(f"Error running unwrap_parallel.csh: {err}")
 
         meta = {
         "inputs": {
@@ -180,7 +180,8 @@ def unwrap(project_root: Path, orbit: Path, corr_threshold: float, max_dis_thres
         "execution": {
             "unwrap_script": str(unwrap_script),
             "unwrap_parallel": "unwrap_parallel.csh",
-            "command": "unwrap_parallel.csh intflist 6",
+            "command": f"unwrap_parallel.csh intflist {num_cores}",
+            "num_cores": num_cores,
             "return_code": rc,
             "stderr": err.strip() if err else None,
         },
@@ -213,7 +214,8 @@ def write_meta_log(project_root: Path, orbit: str, landmask_info: dict, unwrap_i
 
 def run_unwrap(project_root: Path, orbit: str, coherence_threshold: float = 0.075,
                corr_threshold: float = 0.01, max_dis_threshold: float = 40,
-               use_landmask: bool = False, use_mask_def: bool = True):
+               use_landmask: bool = False, use_mask_def: bool = True,
+               num_cores: int = 6):
     """
     Run complete unwrapping process.
 
@@ -225,6 +227,7 @@ def run_unwrap(project_root: Path, orbit: str, coherence_threshold: float = 0.07
         max_dis_threshold: Max discontinuity threshold for snaphu (default 40)
         use_landmask: Whether to create and use landmask (default False)
         use_mask_def: Whether to create and use mask_def (default True)
+        num_cores: Number of parallel cores to use (default 6)
 
     Returns:
         tuple: (log_path, result_message)
@@ -252,8 +255,8 @@ def run_unwrap(project_root: Path, orbit: str, coherence_threshold: float = 0.07
     # Run unwrapping
     try:
         unwrap_info = unwrap(project_root, orbit, corr_threshold, max_dis_threshold,
-                            use_landmask, use_mask_def)
-        result_msg += f"Unwrapping completed\n"
+                            use_landmask, use_mask_def, num_cores)
+        result_msg += f"Unwrapping completed with {num_cores} cores\n"
     except Exception as e:
         result_msg += f"Unwrapping failed: {e}\n"
         unwrap_info = {"error": str(e)}

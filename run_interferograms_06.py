@@ -145,10 +145,11 @@ def copy_and_set_config(project_root: Path, orbit: str, config_path, master: str
             if Path(config_path).resolve() != dst.resolve():
                 shutil.copy2(config_path, dst)
             lines = []
+            # Create subswath-specific master name without modifying original
+            master_for_sub = master[:-2] + sub
             for line in dst.read_text().splitlines():
                 if line.strip().startswith("master_image"):
-                    master = master[:-2] + sub
-                    line = f"master_image = {master}"
+                    line = f"master_image = {master_for_sub}"
                 if line.strip().startswith("Proc_stage"):
                     line = "Proc_stage = 1"
                 if line.strip().startswith("shift_topo"):
@@ -179,10 +180,10 @@ def copy_and_set_config(project_root: Path, orbit: str, config_path, master: str
         }
         return config_info
 
-def make_intf(project_root, orbit, sub="F1"):
+def make_intf(project_root, orbit, sub="F1", num_cores=6):
     # Run interferogram generation WITHOUT background mode (&)
     # Redirect output to log file properly
-    cmd = "intf_tops_parallel.csh intf.in batch_tops.config 6"
+    cmd = f"intf_tops_parallel.csh intf.in batch_tops.config {num_cores}"
     cwd = project_root / orbit / sub
     pc, out, err = run_cmd(cmd, cwd)
 
@@ -191,6 +192,7 @@ def make_intf(project_root, orbit, sub="F1"):
     with open(log_file, "w") as f:
         f.write(f"Command: {cmd}\n")
         f.write(f"Return code: {pc}\n\n")
+        f.write(f"Num cores: {num_cores}\n\n")
         f.write("=== STDOUT ===\n")
         f.write(out)
         f.write("\n\n=== STDERR ===\n")
@@ -199,6 +201,7 @@ def make_intf(project_root, orbit, sub="F1"):
     make_intf_info = {
         "command": cmd,
         "subswath": sub,
+        "num_cores": num_cores,
         "log_file": str(log_file),
         "return_code": pc,
         "stdout": out.strip()[:500],  # Limit output length
@@ -230,7 +233,7 @@ def write_meta_log(project_root: Path, orbit: str, subswath: str, intf_list_info
 
     return logp
 
-def run_intf(project_root, orbit, sub, threshold_time, threshold_baseline, config_path, master):
+def run_intf(project_root, orbit, sub, threshold_time, threshold_baseline, config_path, master, num_cores=6):
     lines, years, baselines, intf_list_info = preparing_intf_list(project_root, orbit, sub, threshold_time, threshold_baseline)
 
     # Check if any interferograms were created
@@ -249,7 +252,7 @@ def run_intf(project_root, orbit, sub, threshold_time, threshold_baseline, confi
     show_intf(threshold_time, threshold_baseline, years, lines, baselines)
     copy_intf_info = copy_intf(project_root, orbit)
     config_info = copy_and_set_config(project_root, orbit, config_path, master)
-    make_intf_info = make_intf(project_root, orbit, sub=sub)
+    make_intf_info = make_intf(project_root, orbit, sub=sub, num_cores=num_cores)
     return(write_meta_log(project_root, orbit, sub, intf_list_info, copy_intf_info, config_info, make_intf_info))
 
 

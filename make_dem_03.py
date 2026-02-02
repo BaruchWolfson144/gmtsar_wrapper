@@ -31,7 +31,7 @@ def run_cmd(cmd):
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def try_make_dem_csh(project_root: Path, bbox, mode, make_dem_path=None):
+def try_make_dem_csh(project_root: Path, bbox, mode, orbit: str = "asc", make_dem_path=None):
     """
     Create DEM using GMTSAR's make_dem.csh script.
 
@@ -39,6 +39,7 @@ def try_make_dem_csh(project_root: Path, bbox, mode, make_dem_path=None):
         project_root: Root directory of the project
         bbox: Dictionary with minlon, maxlon, minlat, maxlat
         mode: 1 for SRTM1 (30m), 2 for SRTM3 (90m)
+        orbit: Orbit type - "asc" or "des" (default: "asc")
         make_dem_path: Optional explicit path to make_dem.csh
 
     Returns:
@@ -50,7 +51,7 @@ def try_make_dem_csh(project_root: Path, bbox, mode, make_dem_path=None):
         return None, "make_dem.csh not found in PATH"
 
     # make_dem.csh needs to run in the topo directory
-    topo_dir = project_root / "asc" / "topo"
+    topo_dir = project_root / orbit / "topo"
     topo_dir.mkdir(parents=True, exist_ok=True)
 
     # Save current directory and change to topo
@@ -76,30 +77,31 @@ def try_make_dem_csh(project_root: Path, bbox, mode, make_dem_path=None):
         os.chdir(original_dir)
 
 
-def link_dem_to_project(project_root: Path, dem_path: Path):
+def link_dem_to_project(project_root: Path, dem_path: Path, orbit: str = "asc"):
     """
     Link or copy DEM file to standard project locations.
 
-    The DEM is placed in asc/topo/dem.grd and symlinked to:
-    - asc/F1/topo/dem.grd
-    - asc/F2/topo/dem.grd
-    - asc/F3/topo/dem.grd
-    - asc/merge/dem.grd
-    - des/topo/dem.grd (if descending orbit exists)
+    The DEM is placed in {orbit}/topo/dem.grd and symlinked to:
+    - {orbit}/F1/topo/dem.grd
+    - {orbit}/F2/topo/dem.grd
+    - {orbit}/F3/topo/dem.grd
+    - {orbit}/merge/dem.grd
+    - Other orbit's topo/dem.grd (if exists)
 
     Args:
         project_root: Root directory of the project
         dem_path: Path to the source dem.grd file
+        orbit: Orbit type - "asc" or "des" (default: "asc")
     """
-    dest = project_root / "asc" / "topo" / "dem.grd"
+    dest = project_root / orbit / "topo" / "dem.grd"
     if dem_path.resolve() != dest.resolve():
         shutil.copy2(dem_path, dest)
 
     targets = [
-        project_root / "asc" / "F1" / "topo" / "dem.grd",
-        project_root / "asc" / "F2" / "topo" / "dem.grd",
-        project_root / "asc" / "F3" / "topo" / "dem.grd",
-        project_root / "asc" / "merge" / "dem.grd"
+        project_root / orbit / "F1" / "topo" / "dem.grd",
+        project_root / orbit / "F2" / "topo" / "dem.grd",
+        project_root / orbit / "F3" / "topo" / "dem.grd",
+        project_root / orbit / "merge" / "dem.grd"
     ]
     for t in targets:
         try:
@@ -109,11 +111,13 @@ def link_dem_to_project(project_root: Path, dem_path: Path):
         except Exception:
             shutil.copy2(dest, t)
 
-    des_topo = project_root / "des" / "topo"
-    if des_topo.exists():
-        ddest = des_topo / "dem.grd"
-        if not ddest.exists():
-            shutil.copy2(dest, ddest)
+    # Also copy to other orbit if it exists
+    other_orbit = "des" if orbit == "asc" else "asc"
+    other_topo = project_root / other_orbit / "topo"
+    if other_topo.exists():
+        other_dest = other_topo / "dem.grd"
+        if not other_dest.exists():
+            shutil.copy2(dest, other_dest)
 
 
 def write_meta_log(project_root: Path, bbox, mode, result_msg, dem_path):
@@ -133,7 +137,7 @@ def write_meta_log(project_root: Path, bbox, mode, result_msg, dem_path):
     return logp
 
 
-def run_make_dem(project_root: Path, bbox: dict, mode: int, make_dem_path=None):
+def run_make_dem(project_root: Path, bbox: dict, mode: int, orbit: str = "asc", make_dem_path=None):
     """
     Complete DEM creation workflow.
 
@@ -141,6 +145,7 @@ def run_make_dem(project_root: Path, bbox: dict, mode: int, make_dem_path=None):
         project_root: Root directory of the project
         bbox: Bounding box dictionary with minlon, maxlon, minlat, maxlat
         mode: 1 for SRTM1 (30m), 2 for SRTM3 (90m)
+        orbit: Orbit type - "asc" or "des" (default: "asc")
         make_dem_path: Optional explicit path to make_dem.csh
 
     Returns:
@@ -150,13 +155,14 @@ def run_make_dem(project_root: Path, bbox: dict, mode: int, make_dem_path=None):
         project_root,
         bbox,
         mode,
+        orbit=orbit,
         make_dem_path=make_dem_path
     )
 
     result_msg = "make_dem: " + msg + "\n"
 
     if dem_path:
-        link_dem_to_project(project_root, dem_path)
+        link_dem_to_project(project_root, dem_path, orbit=orbit)
         result_msg += f"Linked dem from {dem_path}\n"
 
     logp = write_meta_log(project_root, bbox, mode, result_msg, dem_path)

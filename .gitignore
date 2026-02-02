@@ -11,6 +11,7 @@ env/
 
 # Logs
 *.log
+wget-log*
 
 # Jupyter
 .ipynb_checkpoints/

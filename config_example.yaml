@@ -5,7 +5,7 @@
 # ==============================================================================
 # PROJECT SETTINGS
 # ==============================================================================
-project_root: "/path/to/your/project"
+project_root: "/home/oksana/Desktop/nfs/Geodesy_LAB/sinai_plate"
 orbit: "asc"  # Options: "asc" (ascending) or "des" (descending)
 
 # ==============================================================================
@@ -19,13 +19,13 @@ orbit: "asc"  # Options: "asc" (ascending) or "des" (descending)
 # WKT polygon defining area of interest (must be a closed polygon)
 # Format: "POLYGON((lon1 lat1, lon2 lat2, ..., lon1 lat1))"
 # Example below matches the bbox above
-polygon: "POLYGON((-157.0 18.0, -154.2 18.0, -154.2 20.4, -157.0 20.4, -157.0 18.0))"
+polygon: "POLYGON((31.6879 29.7193,32.4268 27.5483,33.9415 28.6081,32.975 30.2811,31.6879 29.7193))"
 
 # Date range for Sentinel-1 data acquisition
 # Format: "Month+Day,+Year" (URL-encoded format for ASF API)
 # Adjust these dates to your study period
-start_date: "January+1,+2023"
-end_date: "December+31,+2023"
+start_date: "January+1,+2014"
+end_date: "December+31,+2024"
 
 # Sentinel-1 relative orbit number (also called "path")
 # Find your orbit number at: https://search.asf.alaska.edu
@@ -34,7 +34,7 @@ end_date: "December+31,+2023"
 #   - Hawaii descending: 87
 #   - Israel ascending: 87
 #   - Israel descending: 160
-relative_orbit: 124
+relative_orbit: 58, 160
 
 # ASF EarthData credentials (REQUIRED for data download)
 # Register for free at: https://urs.earthdata.nasa.gov
@@ -56,7 +56,7 @@ polarization: "VV"
 # STAGE 3: DEM CREATION
 # ==============================================================================
 # Bounding box for DEM (in decimal degrees): [minlon, maxlon, minlat, maxlat]
-bbox: [-157.0, -154.2, 18.0, 20.4]
+bbox: 
 
 # DEM resolution mode
 # 1 = SRTM1 (30m resolution)
@@ -76,16 +76,16 @@ orbit_mode: 1
 
 # Reframing (stitching/cropping) settings
 # Set reframe to true if you need to combine multiple frames or crop the scene
-reframe: false
+reframe: 
 
 # Pin coordinates for reframing (required only if reframe: true)
 # Pins should be ordered in along-track direction:
 # - For ascending: pin1 (south) to pin2 (north)
 # - For descending: pin1 (north) to pin2 (south)
-pin1_lon: -157.0
-pin1_lat: 18.0
-pin2_lon: -154.2
-pin2_lat: 20.4
+pin1_lon: 
+pin1_lat: 
+pin2_lon: 
+pin2_lat: 
 
 # ==============================================================================
 # STAGE 5: MASTER SELECTION AND ALIGNMENT
@@ -107,12 +107,12 @@ subswath_list:
 # Temporal baseline threshold (days)
 # Only image pairs separated by less than this many days will be processed
 # Typical range: 48-200 days
-threshold_time: 100
+threshold_time: 50
 
 # Perpendicular baseline threshold (meters)
 # Only image pairs with perpendicular baseline less than this will be processed
 # Typical range: 100-300 meters
-threshold_baseline: 150
+threshold_baseline: 180
 
 # Path to batch_tops.config configuration file
 # This file contains GMTSAR processing parameters
@@ -153,6 +153,18 @@ use_landmask: false
 use_mask_def: true
 
 # ==============================================================================
+# PARALLEL PROCESSING
+# ==============================================================================
+parallel:
+  # Number of CPU cores to use for parallel processing
+  # Set to number appropriate for your machine (check with: nproc)
+  num_cores: 12
+
+  # Enable parallel subswath processing in Stage 6
+  # When true, F1, F2, F3 are processed simultaneously
+  parallel_subswaths: true
+
+# ==============================================================================
 # ADVANCED OPTIONS
 # ==============================================================================
 advanced:
@@ -161,9 +173,6 @@ advanced:
 
   # Verbose output
   verbose: true
-
-  # Number of parallel processes (for future implementation)
-  # num_processes: 4
 
 # ==============================================================================
 # USAGE EXAMPLES
