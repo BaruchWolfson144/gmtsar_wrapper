@@ -164,6 +164,15 @@ parallel:
   # When true, F1, F2, F3 are processed simultaneously
   parallel_subswaths: true
 
+  # Enable parallel reframing in Stage 4 (experimental)
+  # Uses directory isolation to run multiple dates simultaneously
+  # Provides ~3-4x speedup for reframing step
+  parallel_reframe: false
+
+  # Number of parallel workers for reframing (if parallel_reframe is true)
+  # Recommended: 4-6 workers for 16GB RAM, 6-8 for 32GB RAM
+  reframe_workers: 4
+
 # ==============================================================================
 # ADVANCED OPTIONS
 # ==============================================================================

@@ -27,11 +27,19 @@ Reference:
 import argparse
 import subprocess
 import json
+import shutil
 import sys
 import re
 from pathlib import Path
 from collections import defaultdict
 import datetime
+
+# Import parallel reframe module
+try:
+    from parallel_reframe import run_parallel_reframe
+    PARALLEL_REFRAME_AVAILABLE = True
+except ImportError:
+    PARALLEL_REFRAME_AVAILABLE = False
 
 def run_cmd(cmd):
     """Execute shell command and return results."""
@@ -182,7 +190,7 @@ def write_meta_log(
 
 
 def download_orbits_with_reframe(project_root: Path, orbit: str, orbit_list: Path,
-                                 pins_file: Path) -> tuple:
+                                 pins_file: Path, parallel_config: dict = None) -> tuple:
     """
     Download orbits AND reframe data using organize_files_tops_linux.csh (Section 4.b).
 
@@ -193,11 +201,16 @@ def download_orbits_with_reframe(project_root: Path, orbit: str, orbit_list: Pat
     - Mode 1: Downloads orbits and prepares files (~5 min)
     - Mode 2: Creates stitched/cropped SAFE directories (~35 min)
 
+    With parallel_reframe enabled, mode 2 runs in parallel using directory isolation.
+
     Args:
         project_root: Root directory of the project
         orbit: Orbit directory (asc/des)
         orbit_list: Path to SAFE_filelist
         pins_file: Path to pins.ll file
+        parallel_config: Optional dict with parallel settings:
+            - parallel_reframe: bool (default: False)
+            - reframe_workers: int (default: 4)
 
     Returns:
         tuple: (success, commands list, result message)
@@ -206,6 +219,16 @@ def download_orbits_with_reframe(project_root: Path, orbit: str, orbit_list: Pat
 
     commands = []
     result_msg = ""
+
+    # Get parallel settings
+    parallel_config = parallel_config or {}
+    use_parallel = parallel_config.get("parallel_reframe", False)
+    reframe_workers = parallel_config.get("reframe_workers", 4)
+
+    # Check if parallel reframe is available
+    if use_parallel and not PARALLEL_REFRAME_AVAILABLE:
+        print("Warning: parallel_reframe module not available, falling back to sequential")
+        use_parallel = False
 
     # organize_files_tops_linux.csh creates output in current working directory
     # We need to run it from the data directory so outputs go to the right place
@@ -230,29 +253,103 @@ def download_orbits_with_reframe(project_root: Path, orbit: str, orbit_list: Pat
             result_msg = f"organize_files_tops mode 1 failed: {err1}"
             return False, commands, result_msg
 
-        # Step 2: Run organize_files_tops_linux.csh with mode 2
-        # This creates stitched/cropped SAFE directories
-        cmd2 = f"organize_files_tops_linux.csh {orbit_list} {pins_file} 2"
-        rc2, out2, err2 = run_cmd(cmd2)
-        commands.append({
-            "cmd": cmd2,
-            "returncode": rc2,
-            "stdout": out2.strip(),
-            "stderr": err2.strip()
-        })
+        # Step 2: Reframing (mode 2) - either parallel or sequential
+        if use_parallel:
+            # =================================================================
+            # PARALLEL REFRAMING
+            # =================================================================
+            print(f"\nUsing parallel reframing with {reframe_workers} workers...")
 
-        if rc2 != 0:
-            result_msg = f"organize_files_tops mode 2 failed: {err2}"
-            return False, commands, result_msg
+            # Restore directory before calling parallel_reframe
+            os.chdir(original_dir)
+
+            success, results = run_parallel_reframe(
+                project_root,
+                orbit,
+                num_workers=reframe_workers,
+                pins_file=pins_file
+            )
+
+            # Record parallel reframe in commands
+            successful_dates = sum(1 for r in results if r['success'])
+            failed_dates = sum(1 for r in results if not r['success'])
+            total_duration = sum(r.get('duration', 0) for r in results)
+
+            commands.append({
+                "cmd": f"parallel_reframe(workers={reframe_workers})",
+                "returncode": 0 if success else 1,
+                "dates_processed": len(results),
+                "dates_successful": successful_dates,
+                "dates_failed": failed_dates,
+                "total_duration": total_duration
+            })
+
+            if not success:
+                failed_list = [r['date'] for r in results if not r['success']][:5]
+                result_msg = f"Parallel reframing failed: {failed_dates} dates failed. First: {failed_list}"
+                return False, commands, result_msg
+
+            # Check for reframed directories
+            reframed_dirs = sorted(data_dir.glob("F*_F*"))
+            if reframed_dirs:
+                final_dir = reframed_dirs[0]
+                safe_count = len(list(final_dir.glob("*.SAFE")))
+                result_msg = f"Parallel reframing successful: {successful_dates} dates processed in {total_duration:.1f}s. "
+                result_msg += f"Total: {safe_count} reframed SAFE files in {final_dir.name}"
+            else:
+                result_msg = f"Parallel reframing completed but no F*_F* directory found"
+
+            return success, commands, result_msg
+
+        else:
+            # =================================================================
+            # SEQUENTIAL REFRAMING (original behavior)
+            # =================================================================
+            cmd2 = f"organize_files_tops_linux.csh {orbit_list} {pins_file} 2"
+            rc2, out2, err2 = run_cmd(cmd2)
+            commands.append({
+                "cmd": cmd2,
+                "returncode": rc2,
+                "stdout": out2.strip(),
+                "stderr": err2.strip()
+            })
+
+            if rc2 != 0:
+                result_msg = f"organize_files_tops mode 2 failed: {err2}"
+                return False, commands, result_msg
 
         # Check for Fxxxx_Fxxxx directories created (reframed data)
-        reframed_dirs = list(data_dir.glob("F*_F*"))
+        reframed_dirs = sorted(data_dir.glob("F*_F*"))
 
-        if reframed_dirs:
-            result_msg = f"Reframing successful. Created {len(reframed_dirs)} reframed directories: "
-            result_msg += ", ".join([d.name for d in reframed_dirs])
-        else:
+        if not reframed_dirs:
             result_msg = "Warning: No Fxxxx_Fxxxx directories found after reframing"
+            return True, commands, result_msg
+
+        # If multiple F*_F* directories exist, merge them into one
+        # (per GMTSAR manual: timing differences can create multiple directories)
+        if len(reframed_dirs) > 1:
+            target_dir = reframed_dirs[0]
+            merged_count = 0
+            for src_dir in reframed_dirs[1:]:
+                # Move all SAFE directories from src to target
+                for safe_dir in src_dir.glob("*.SAFE"):
+                    dst = target_dir / safe_dir.name
+                    if not dst.exists():
+                        shutil.move(str(safe_dir), str(target_dir))
+                        merged_count += 1
+                # Remove empty source directory
+                if not any(src_dir.iterdir()):
+                    src_dir.rmdir()
+
+            result_msg = f"Reframing successful. Merged {len(reframed_dirs)} directories into {target_dir.name} "
+            result_msg += f"({merged_count} SAFE files moved)"
+        else:
+            result_msg = f"Reframing successful. Created directory: {reframed_dirs[0].name}"
+
+        # Count total SAFE files in the final directory
+        final_dir = sorted(data_dir.glob("F*_F*"))[0]
+        safe_count = len(list(final_dir.glob("*.SAFE")))
+        result_msg += f" - Total: {safe_count} reframed SAFE files"
 
         return True, commands, result_msg
 
@@ -334,14 +431,30 @@ def validate_pins_coverage(project_root: Path, orbit: str,
     # Check southern pin
     if south_pin < safe_min_lat:
         diff = safe_min_lat - south_pin
-        issues.append(f"Southern pin ({south_pin:.4f}°) is {diff:.4f}° below safe minimum ({safe_min_lat:.4f}°)")
+        # Find specific dates that would fail (their coverage doesn't reach the southern pin)
+        failed_dates_south = sorted([d for d, dc in date_coverages.items()
+                                      if dc['min_lat'] > south_pin])
+        issues.append(f"Southern pin ({south_pin:.4f}°) is {diff:.4f}° below safe minimum ({safe_min_lat:.4f}°). "
+                     f"{len(failed_dates_south)} dates would fail!")
+        if failed_dates_south:
+            print(f"\n  SCENES FAILING SOUTHERN PIN CHECK ({len(failed_dates_south)} dates):")
+            for d in failed_dates_south:
+                dc = date_coverages[d]
+                print(f"    - {d}: coverage {dc['min_lat']:.4f}° to {dc['max_lat']:.4f}°")
 
     # Check northern pin
     if north_pin > safe_max_lat:
         diff = north_pin - safe_max_lat
-        affected_dates = len([d for d, dc in date_coverages.items() if dc['max_lat'] < north_pin])
+        # Find specific dates that would fail (their coverage doesn't reach the northern pin)
+        failed_dates_north = sorted([d for d, dc in date_coverages.items()
+                                      if dc['max_lat'] < north_pin])
         issues.append(f"Northern pin ({north_pin:.4f}°) is {diff:.4f}° above safe maximum ({safe_max_lat:.4f}°). "
-                     f"{affected_dates} dates would fail!")
+                     f"{len(failed_dates_north)} dates would fail!")
+        if failed_dates_north:
+            print(f"\n  SCENES FAILING NORTHERN PIN CHECK ({len(failed_dates_north)} dates):")
+            for d in failed_dates_north:
+                dc = date_coverages[d]
+                print(f"    - {d}: coverage {dc['min_lat']:.4f}° to {dc['max_lat']:.4f}°")
 
     if issues:
         return {
@@ -371,7 +484,8 @@ def run_download_orbits(
     pin1_lon: float = None,
     pin1_lat: float = None,
     pin2_lon: float = None,
-    pin2_lat: float = None
+    pin2_lat: float = None,
+    parallel_config: dict = None
 ):
     """
     Complete workflow for orbit download with optional reframing.
@@ -383,6 +497,9 @@ def run_download_orbits(
         reframe: If True, perform reframing with orbit download
         pin1_lon, pin1_lat: First pin coordinates (required if reframe=True)
         pin2_lon, pin2_lat: Second pin coordinates (required if reframe=True)
+        parallel_config: Optional dict with parallel settings:
+            - parallel_reframe: bool - enable parallel reframing
+            - reframe_workers: int - number of parallel workers
 
     Returns:
         tuple: (success, result_message, log_path)
@@ -413,7 +530,7 @@ def run_download_orbits(
 
         # Combined orbit download + reframing (Section 4.b)
         success, commands, result_msg = download_orbits_with_reframe(
-            project_root, orbit, orbit_list, pins_file
+            project_root, orbit, orbit_list, pins_file, parallel_config
         )
     else:
         # Simple orbit download only (Section 4.a)
@@ -443,6 +560,8 @@ def run_download_orbits(
             "pin1": {"lon": pin1_lon, "lat": pin1_lat},
             "pin2": {"lon": pin2_lon, "lat": pin2_lat}
         }
+        if parallel_config:
+            meta["inputs"]["parallel_config"] = parallel_config
 
     logp = project_root / "wrapper_meta" / "logs" / f"orbits_{orbit}.json"
     logp.parent.mkdir(parents=True, exist_ok=True)
@@ -474,6 +593,12 @@ def main():
     parser.add_argument("--pin2_lat", type=float,
                        help="Latitude of second pin for reframing")
 
+    # Parallel reframing arguments
+    parser.add_argument("--parallel-reframe", action="store_true",
+                       help="Use parallel reframing (requires reframe flag)")
+    parser.add_argument("--reframe-workers", type=int, default=4,
+                       help="Number of parallel workers for reframing (default: 4)")
+
     args = parser.parse_args()
     project_root = Path(args.project_root).expanduser().resolve()
 
@@ -491,10 +616,20 @@ def main():
     print(f"Orbit: {args.orbit}")
     print(f"Mode: {args.mode} ({'precise' if args.mode == 1 else 'restituted'})")
 
+    # Build parallel config
+    parallel_config = None
     if args.reframe:
         print(f"Reframing: YES")
         print(f"Pin 1: ({args.pin1_lon}, {args.pin1_lat})")
         print(f"Pin 2: ({args.pin2_lon}, {args.pin2_lat})")
+        if args.parallel_reframe:
+            parallel_config = {
+                "parallel_reframe": True,
+                "reframe_workers": args.reframe_workers
+            }
+            print(f"Parallel reframe: YES ({args.reframe_workers} workers)")
+        else:
+            print(f"Parallel reframe: NO (sequential)")
     else:
         print(f"Reframing: NO")
     print("-" * 60)
@@ -507,7 +642,8 @@ def main():
         pin1_lon=args.pin1_lon,
         pin1_lat=args.pin1_lat,
         pin2_lon=args.pin2_lon,
-        pin2_lat=args.pin2_lat
+        pin2_lat=args.pin2_lat,
+        parallel_config=parallel_config
     )
 
     print("\n" + result_msg)
